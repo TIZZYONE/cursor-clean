@@ -1,3 +1,6 @@
+[![PyPI](https://img.shields.io/pypi/v/cursor-clean.svg)](https://pypi.org/project/cursor-clean/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 # cursor-clean
 
 轻量命令行工具：清理 Cursor 在 Windows 上占用的 Roaming 数据。
@@ -40,6 +43,11 @@ cursor-clean vacuum --lang zh
 2. 清理前退出 Cursor，否则 VACUUM 可能卡住
 3. 保留 backup
 4. 不写删除日志、不建自己的数据库
+
+## Links
+
+- PyPI: https://pypi.org/project/cursor-clean/
+- GitHub: https://github.com/TIZZYONE/cursor-clean
 
 ## License
 

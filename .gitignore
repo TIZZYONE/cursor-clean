@@ -1,4 +1,3 @@
-.gitignore
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -9,3 +8,5 @@ build/
 .venv/
 venv/
 *.whl
+docs/wechat-csdn-post.md
+docs/GITHUB.md

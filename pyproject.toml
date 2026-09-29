@@ -9,7 +9,7 @@ description = "Scan and clean Cursor Roaming data: old chats and unused agent ve
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-authors = [{ name = "cursor-clean contributors" }]
+authors = [{ name = "TIZZYONE" }]
 keywords = ["cursor", "cleanup", "disk", "sqlite", "windows"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -24,7 +24,9 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://pypi.org/project/cursor-clean/"
+Homepage = "https://github.com/TIZZYONE/cursor-clean"
+Repository = "https://github.com/TIZZYONE/cursor-clean"
+Issues = "https://github.com/TIZZYONE/cursor-clean/issues"
 
 [project.scripts]
 cursor-clean = "cursor_clean.cli:main"
