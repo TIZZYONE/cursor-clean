@@ -77,7 +77,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_clean.add_argument(
         "--force",
         action="store_true",
-        help="Allow while Cursor appears running (not recommended).",
+        help="Try VACUUM even if Cursor appears running (not recommended).",
     )
 
     p_vac = sub.add_parser("vacuum", help="Only VACUUM state.vscdb. Quit Cursor first.")
@@ -133,6 +133,7 @@ def _print_report(report: ScanReport) -> None:
 
 
 def _ensure_cursor_quit(*, force: bool) -> int | None:
+    """Hard-stop only when exclusive DB access is required (vacuum)."""
     n = cursor_process_count()
     if n > 0:
         print(t("cursor_count", n=n), file=sys.stderr)
@@ -157,9 +158,16 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 def cmd_clean(args: argparse.Namespace) -> int:
-    blocked = _ensure_cursor_quit(force=args.force)
-    if blocked is not None:
-        return blocked
+    cursor_n = cursor_process_count()
+    # Agents + chat deletes do NOT require quitting Cursor.
+    # VACUUM needs exclusive lock — auto-skip if Cursor is running (unless --force).
+    want_vacuum = not args.skip_vacuum
+    if want_vacuum and cursor_n > 0 and not args.force:
+        print(t("cursor_count", n=cursor_n), file=sys.stderr)
+        print(t("vacuum_auto_skip"), file=sys.stderr)
+        want_vacuum = False
+    elif want_vacuum and cursor_n > 0 and args.force:
+        print(t("cursor_running_warn"), file=sys.stderr)
 
     report = scan(
         data_dir=args.data_dir,
@@ -174,7 +182,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
     will_cache = bool(args.include_cache) and (
         report.cached_data_bytes > 0 or report.logs_bytes > 0
     )
-    will_vacuum = not args.skip_vacuum
+    will_vacuum = want_vacuum
 
     if not (will_chats or will_agents or will_cache or will_vacuum):
         print(t("nothing"))
@@ -193,6 +201,8 @@ def cmd_clean(args: argparse.Namespace) -> int:
         print(t("plan_chats", n=report.chat.old_composers))
     if will_vacuum:
         print(t("plan_vacuum"))
+    elif not args.skip_vacuum and cursor_n > 0:
+        print(t("plan_vacuum_later"))
     if will_cache:
         print(
             t(
@@ -214,7 +224,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
         clean_chats=not args.skip_chats,
         clean_agents=not args.skip_agents,
         include_cache=args.include_cache,
-        do_vacuum=not args.skip_vacuum,
+        do_vacuum=will_vacuum,
     )
 
     print()
@@ -244,6 +254,8 @@ def cmd_clean(args: argparse.Namespace) -> int:
             vacuum=t("vacuum_ok") if result.vacuum_done else "",
         )
     )
+    if result.vacuum_skipped or (not will_vacuum and not args.skip_vacuum):
+        print(t("hint_run_vacuum"))
     if result.cache_bytes_freed:
         print(t("cache_freed", size=format_bytes(result.cache_bytes_freed)))
     for err in result.errors:

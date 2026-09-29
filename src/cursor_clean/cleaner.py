@@ -15,6 +15,9 @@ from cursor_clean.scanner import AgentVersionInfo, ChatCleanupPlan, ScanReport, 
 
 ProgressFn = Callable[[str], None]
 
+# Delete chats in small batches so the bar shows real N/M progress.
+CHAT_BATCH_SIZE = 25
+
 
 def _default_progress(msg: str) -> None:
     print(msg, flush=True)
@@ -29,6 +32,7 @@ class CleanResult:
     chat_deleted_composers: int = 0
     chat_deleted_kv_rows: int = 0
     vacuum_done: bool = False
+    vacuum_skipped: bool = False
     state_db_before: int = 0
     state_db_after: int = 0
     agent_deleted: list[str] = field(default_factory=list)
@@ -54,56 +58,67 @@ def _db_size_label(db_path: Path, prefix: str) -> str:
     return f"{prefix} db={_fmt_gb(main)} wal={_fmt_gb(wal)}"
 
 
+def _delete_one_composer(con: sqlite3.Connection, composer_id: str) -> int:
+    """Delete KV + header for one composer. Returns KV rows removed."""
+    before = con.total_changes
+    con.execute(
+        """
+        DELETE FROM cursorDiskKV
+        WHERE
+          (key LIKE 'composerData:%' AND substr(key, 14, 36) = ?)
+          OR (key LIKE 'bubbleId:%' AND substr(key, 10, 36) = ?)
+          OR (key LIKE 'checkpointId:%' AND substr(key, 14, 36) = ?)
+          OR (key LIKE 'messageRequestContext:%' AND substr(key, 23, 36) = ?)
+        """,
+        (composer_id, composer_id, composer_id, composer_id),
+    )
+    kv = con.total_changes - before
+    con.execute("DELETE FROM composerHeaders WHERE composerId = ?", (composer_id,))
+    return kv
+
+
 def delete_old_chats(
     db_path: Path,
     plan: ChatCleanupPlan,
     *,
     progress: ProgressFn = _default_progress,
+    batch_size: int = CHAT_BATCH_SIZE,
 ) -> tuple[int, int]:
-    """Delete old composers and related KV rows. Does not VACUUM."""
-    if not plan.old_composer_ids:
+    """Delete old composers in batches. Progress = chats deleted / total."""
+    ids = plan.old_composer_ids
+    if not ids:
         return 0, 0
 
-    progress(t("progress_del_chats", n=len(plan.old_composer_ids)))
+    total = len(ids)
+    progress(t("progress_del_chats", n=total))
     progress(t("progress_size_note"))
     t0 = time.time()
     con = _open_rw(db_path)
-    bar = ProgressBar(indeterminate=True, label=_db_size_label(db_path, t("bar_delete_chats")))
-    bar.start_heartbeat(0.5)
+    bar = ProgressBar(total=total, label=t("bar_delete_chats"))
+    headers_deleted = 0
+    kv_deleted = 0
     try:
-        con.execute("CREATE TEMP TABLE old_c (id TEXT PRIMARY KEY)")
-        con.executemany(
-            "INSERT OR IGNORE INTO old_c(id) VALUES (?)",
-            [(i,) for i in plan.old_composer_ids],
-        )
-        attach_sqlite_progress(con, bar, every=2000)
+        for i, cid in enumerate(ids, start=1):
+            try:
+                kv_deleted += _delete_one_composer(con, cid)
+                headers_deleted += 1
+            except sqlite3.Error as exc:
+                # Commit what we have; report and continue if possible.
+                con.rollback()
+                progress(t("warning", msg=f"{cid}: {exc}"))
+                # Re-open friendly path: try commit of previous? already rolled back this one
+                continue
 
-        before_kv = con.total_changes
-        con.execute(
-            """
-            DELETE FROM cursorDiskKV
-            WHERE
-              (key LIKE 'composerData:%'
-               AND substr(key, 14, 36) IN (SELECT id FROM old_c))
-              OR
-              (key LIKE 'bubbleId:%'
-               AND substr(key, 10, 36) IN (SELECT id FROM old_c))
-              OR
-              (key LIKE 'checkpointId:%'
-               AND substr(key, 14, 36) IN (SELECT id FROM old_c))
-              OR
-              (key LIKE 'messageRequestContext:%'
-               AND substr(key, 23, 36) IN (SELECT id FROM old_c))
-            """
-        )
-        kv_deleted = con.total_changes - before_kv
-        bar.update(force=True, label=_db_size_label(db_path, t("bar_delete_chats")))
+            if i % batch_size == 0 or i == total:
+                con.commit()
 
-        before_h = con.total_changes
-        con.execute("DELETE FROM composerHeaders WHERE composerId IN (SELECT id FROM old_c)")
-        headers_deleted = con.total_changes - before_h
+            bar.update(
+                i,
+                force=(i % 2 == 0 or i == total),
+                label=f"{t('bar_delete_chats')} {i}/{total}",
+            )
+
         con.commit()
-        con.set_progress_handler(None, 0)
         bar.finish()
         progress(
             t(
@@ -116,7 +131,7 @@ def delete_old_chats(
         return headers_deleted, kv_deleted
     except Exception:
         try:
-            con.set_progress_handler(None, 0)
+            con.rollback()
         except Exception:
             pass
         bar.finish(ok=False)
@@ -130,7 +145,7 @@ def vacuum_state_db(
     *,
     progress: ProgressFn = _default_progress,
 ) -> None:
-    """VACUUM state.vscdb. Needs Cursor fully quit (exclusive lock)."""
+    """VACUUM state.vscdb. Needs exclusive lock (Cursor fully quit)."""
     before = _file_size(db_path)
     wal_before = _file_size(Path(str(db_path) + "-wal"))
     progress(t("progress_vacuum", gb=before / (1024**3)))
@@ -145,20 +160,13 @@ def vacuum_state_db(
     )
     bar.start_heartbeat(0.5)
 
-    # Short busy timeout: fail fast if Cursor still holds the lock.
     con = sqlite3.connect(str(db_path), timeout=15)
     try:
         con.execute("PRAGMA busy_timeout=15000")
         attach_sqlite_progress(con, bar, every=1000)
-
-        def _refresh_label() -> None:
-            bar.update(force=True, label=_db_size_label(db_path, t("bar_vacuum")))
-
-        # Checkpoint first — can already reclaim a huge -wal while Cursor is quit.
         progress(t("progress_checkpoint"))
         con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        _refresh_label()
-
+        bar.update(force=True, label=_db_size_label(db_path, t("bar_vacuum")))
         con.execute("VACUUM")
         con.set_progress_handler(None, 0)
         bar.finish()
@@ -188,7 +196,11 @@ def clean_agent_versions(
     *,
     progress: ProgressFn = _default_progress,
 ) -> tuple[list[str], int]:
-    """Delete agent version folders marked keep=False."""
+    """Delete old agent version folders. Does not require quitting Cursor.
+
+    The newest (kept) version may be in use; old ones are usually deletable.
+    Locked folders are skipped and reported.
+    """
     to_delete = [v for v in versions if not v.keep]
     if not to_delete:
         return [], 0
@@ -197,39 +209,44 @@ def clean_agent_versions(
     bar = ProgressBar(total=len(to_delete), label=t("bar_delete_agents"))
     deleted: list[str] = []
     freed = 0
-    errors: list[str] = []
+    skipped: list[str] = []
     try:
         for i, item in enumerate(to_delete, start=1):
             size = item.size_bytes
             bar.update(
                 i - 1,
                 force=True,
-                label=f"{t('bar_delete_agents')} {item.name}",
+                label=f"{t('bar_delete_agents')} {i - 1}/{len(to_delete)} {item.name}",
             )
             try:
                 if not item.path.exists():
-                    # Already gone — count as done, no bytes.
                     deleted.append(item.name)
                 else:
                     shutil.rmtree(item.path)
                     if item.path.exists():
-                        errors.append(f"{item.name}: still exists after delete")
+                        skipped.append(f"{item.name}: still exists")
                     else:
                         deleted.append(item.name)
                         freed += size
             except OSError as exc:
-                errors.append(f"{item.name}: {exc}")
-            bar.update(i, force=True)
-        bar.finish(ok=not errors)
+                skipped.append(f"{item.name}: {exc}")
+            bar.update(
+                i,
+                force=True,
+                label=f"{t('bar_delete_agents')} {i}/{len(to_delete)}",
+            )
+        bar.finish(ok=not skipped)
     except Exception:
         bar.finish(ok=False)
         raise
 
     progress(t("progress_agents_freed", gb=freed / (1024**3)))
-    if errors:
-        for err in errors:
-            progress(t("warning", msg=err))
-        raise OSError(t("agent_partial_fail", n=len(errors)))
+    if skipped:
+        progress(t("agent_skipped", n=len(skipped)))
+        for msg in skipped[:8]:
+            progress(t("warning", msg=msg))
+        if len(skipped) > 8:
+            progress(t("warning", msg=f"... +{len(skipped) - 8}"))
     return deleted, freed
 
 
@@ -259,7 +276,7 @@ def clean(
     do_vacuum: bool = True,
     progress: ProgressFn | None = None,
 ) -> CleanResult:
-    """Apply cleanup. Order: agents -> cache -> delete chats -> VACUUM."""
+    """Apply cleanup. Order: agents -> cache -> batch-delete chats -> optional VACUUM."""
     log = progress or _default_progress
     result = CleanResult(state_db_before=_file_size(report.paths["state_db"]))
 
@@ -301,6 +318,8 @@ def clean(
             result.errors.append(t("vacuum_failed_err", err=exc, hint=hint))
         except (sqlite3.Error, OSError) as exc:
             result.errors.append(t("vacuum_failed_err", err=exc, hint=""))
+    elif not do_vacuum:
+        result.vacuum_skipped = True
 
     result.state_db_after = _file_size(report.paths["state_db"])
     return result

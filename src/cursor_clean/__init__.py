@@ -1,3 +1,3 @@
 """cursor-clean: scan and clean Cursor Roaming data on Windows."""
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
