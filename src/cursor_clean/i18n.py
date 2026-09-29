@@ -59,57 +59,40 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "no_agents": "No old agent versions to delete.",
         "will_agents": "Will delete {n} version(s) ({size}), keep newest.",
         "agents_done": "Done. Removed {n} ({size}).",
-        "progress_del_chats": "Deleting {n} old chat(s) from state.vscdb ...",
-        "progress_del_chats_done": "  removed {n} chat(s), {kv} kv row(s) in {sec:.1f}s",
-        "progress_vacuum": (
-            "VACUUM state.vscdb ({gb:.2f} GB) — may take several minutes; "
-            "Cursor must be fully quit ..."
-        ),
+        "progress_del_chats": "Deleting {n} old chat(s) ...",
+        "progress_del_chats_done": "  chats done: {n}, kv rows: {kv}, {sec:.1f}s",
+        "progress_vacuum": "VACUUM state.vscdb ({gb:.2f} GB) ...",
         "progress_vacuum_done": "  VACUUM done in {sec:.1f}s: {before:.2f} GB -> {after:.2f} GB",
         "progress_del_agents": "Deleting {n} old agent version(s) ...",
-        "progress_agents_freed": "  agent versions freed {gb:.2f} GB",
+        "progress_agents_freed": "  agents freed {gb:.2f} GB",
         "progress_cache": "Clearing CachedData / logs ...",
         "progress_cache_done": "  cache/logs freed {mb:.1f} MB",
-        "vacuum_locked_hint": (
-            " Quit Cursor completely (check Task Manager for Cursor.exe), "
-            "then run: cursor-clean vacuum"
+        "phase_agents": "=== [agents] remove {n} old version(s) ===",
+        "phase_chats": "=== [chats] delete {n} old session(s) ===",
+        "phase_vacuum": "=== [vacuum] compact state.vscdb ({gb:.2f} GB) ===",
+        "resume_safe": "Safe to re-run: already-removed items are skipped automatically.",
+        "progress_size_note": (
+            "Chat rows are removed now; file size drops after VACUUM (quit Cursor first)."
         ),
-        "chat_failed": "Chat cleanup failed: {err}",
-        "agent_failed": "Agent version cleanup failed: {err}",
-        "cache_failed": "Cache/logs cleanup failed: {err}",
-        "vacuum_failed_err": "VACUUM failed: {err}.{hint}",
-        "scan_db_fail": "Failed to read state.vscdb: {err}",
-        "scan_db_missing": "state.vscdb not found: {path}",
-        "tip_quit_first": "Tip: fully quit Cursor before clean/vacuum, or the tool may hang.",
+        "progress_vacuum_explain": "Exclusive lock required. Bar shows elapsed time + live db/wal size.",
+        "progress_wal_warn": "WARNING: wal is {gb:.2f} GB — quit Cursor fully before VACUUM.",
+        "progress_checkpoint": "wal_checkpoint(TRUNCATE) ...",
+        "agent_skipped": "Skipped {n} locked folder(s); deleted ones are gone (re-run skips them).",
+        "cursor_count": "Detected {n} Cursor process(es).",
+        "vacuum_auto_skip": (
+            "Cursor running — will clean agents/chats, skip VACUUM. Later: cursor-clean vacuum"
+        ),
+        "plan_vacuum_later": "  - VACUUM later (Cursor running): cursor-clean vacuum",
+        "hint_run_vacuum": "Next: quit Cursor, then run  cursor-clean vacuum",
         "bar_delete_agents": "agents",
         "bar_delete_chats": "chats",
         "bar_vacuum": "VACUUM",
-        "progress_size_note": (
-            "Note: deleting chats frees logical data immediately; the .vscdb file size "
-            "usually drops only after a later VACUUM (Cursor must be quit)."
-        ),
-        "progress_vacuum_explain": (
-            "VACUUM rewrites the whole DB under an exclusive lock. "
-            "Live bar shows activity (elapsed + db/wal size)."
-        ),
-        "progress_wal_warn": (
-            "WARNING: state.vscdb-wal is already {gb:.2f} GB. Quit Cursor fully, then continue; "
-            "otherwise the folder can grow instead of shrink."
-        ),
-        "progress_checkpoint": "Running wal_checkpoint(TRUNCATE) first ...",
-        "agent_partial_fail": "{n} agent folder(s) could not be deleted (often locked by Cursor).",
-        "agent_skipped": "Skipped {n} locked/failed agent folder(s); others were deleted.",
-        "cursor_count": "Detected {n} Cursor process(es).",
-        "vacuum_auto_skip": (
-            "Cursor is running — will delete agents/chats now, but skip VACUUM. "
-            "Quit Cursor later and run: cursor-clean vacuum"
-        ),
-        "plan_vacuum_later": (
-            "  - VACUUM skipped for now (Cursor running); run `cursor-clean vacuum` after quit"
-        ),
-        "hint_run_vacuum": (
-            "Tip: quit Cursor completely, then run `cursor-clean vacuum` to shrink state.vscdb on disk."
-        ),
+        "vacuum_locked_hint": " Quit Cursor, then: cursor-clean vacuum",
+        "chat_failed": "Chat cleanup failed: {err}",
+        "agent_failed": "Agent cleanup failed: {err}",
+        "cache_failed": "Cache cleanup failed: {err}",
+        "vacuum_failed_err": "VACUUM failed: {err}.{hint}",
+        "tip_quit_first": "Quit Cursor completely, then retry.",
     },
     "zh": {
         "choose_lang": "选择语言 / Select language:\n  1) 中文\n  2) English\n请输入 1 或 2 [默认 1]: ",
@@ -161,55 +144,36 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "no_agents": "没有可删除的旧 agent 版本。",
         "will_agents": "将删除 {n} 个版本（{size}），仅保留最新。",
         "agents_done": "完成。已删除 {n}（{size}）。",
-        "progress_del_chats": "正在从 state.vscdb 删除 {n} 个旧聊天 ...",
-        "progress_del_chats_done": "  已删除 {n} 个聊天、{kv} 行 kv，用时 {sec:.1f}s",
-        "progress_vacuum": (
-            "正在 VACUUM state.vscdb（{gb:.2f} GB）— 可能需要几分钟；"
-            "请确保已完全退出 Cursor ..."
-        ),
+        "progress_del_chats": "正在删除 {n} 个旧聊天 ...",
+        "progress_del_chats_done": "  聊天完成: {n} 个，kv {kv} 行，{sec:.1f}s",
+        "progress_vacuum": "正在 VACUUM state.vscdb（{gb:.2f} GB）...",
         "progress_vacuum_done": "  VACUUM 完成，用时 {sec:.1f}s: {before:.2f} GB -> {after:.2f} GB",
         "progress_del_agents": "正在删除 {n} 个旧 agent 版本 ...",
-        "progress_agents_freed": "  agent 版本已释放 {gb:.2f} GB",
+        "progress_agents_freed": "  agent 已释放 {gb:.2f} GB",
         "progress_cache": "正在清理 CachedData / logs ...",
         "progress_cache_done": "  缓存/日志已释放 {mb:.1f} MB",
-        "vacuum_locked_hint": (
-            " 请完全退出 Cursor（任务管理器确认无 Cursor.exe），然后执行: cursor-clean vacuum"
-        ),
-        "chat_failed": "聊天清理失败: {err}",
-        "agent_failed": "Agent 版本清理失败: {err}",
-        "cache_failed": "缓存/日志清理失败: {err}",
-        "vacuum_failed_err": "VACUUM 失败: {err}.{hint}",
-        "scan_db_fail": "读取 state.vscdb 失败: {err}",
-        "scan_db_missing": "未找到 state.vscdb: {path}",
-        "tip_quit_first": "提示: 清理/压缩前请先完全退出 Cursor，否则可能卡住。",
-        "bar_delete_agents": "删agent",
-        "bar_delete_chats": "删聊天",
-        "bar_vacuum": "VACUUM",
-        "progress_size_note": (
-            "说明: 聊天记录会马上从库里删掉；state.vscdb 文件体积通常要等之后 VACUUM "
-            "（需退出 Cursor）才会明显变小。"
-        ),
-        "progress_vacuum_explain": (
-            "VACUUM 需要独占锁整库重写。进度条显示活动状态（已用时 + db/wal 大小）。"
-        ),
-        "progress_wal_warn": (
-            "警告: state.vscdb-wal 已有 {gb:.2f} GB。请先彻底退出 Cursor 再继续，"
-            "否则目录可能越清越大。"
-        ),
-        "progress_checkpoint": "先执行 wal_checkpoint(TRUNCATE) ...",
-        "agent_partial_fail": "有 {n} 个 agent 目录删不掉（多为被 Cursor 占用）。",
-        "agent_skipped": "有 {n} 个 agent 目录被占用/失败已跳过，其余已删除。",
+        "phase_agents": "=== [agent] 删除 {n} 个旧版本 ===",
+        "phase_chats": "=== [聊天] 删除 {n} 个旧会话 ===",
+        "phase_vacuum": "=== [vacuum] 压缩 state.vscdb（{gb:.2f} GB）===",
+        "resume_safe": "可重复执行：已删除的内容会自动跳过。",
+        "progress_size_note": "聊天会立刻从库中删除；文件体积需退出 Cursor 后 VACUUM 才会明显下降。",
+        "progress_vacuum_explain": "需要独占锁。进度条显示已用时与实时 db/wal 大小。",
+        "progress_wal_warn": "警告: wal 已有 {gb:.2f} GB，请先彻底退出 Cursor 再 VACUUM。",
+        "progress_checkpoint": "wal_checkpoint(TRUNCATE) ...",
+        "agent_skipped": "跳过 {n} 个被占用目录；已删的下次会自动跳过。",
         "cursor_count": "检测到 {n} 个 Cursor 进程。",
-        "vacuum_auto_skip": (
-            "检测到 Cursor 正在运行 — 现在会删 agent/旧聊天，但跳过 VACUUM。"
-            "退出 Cursor 后请执行: cursor-clean vacuum"
-        ),
-        "plan_vacuum_later": (
-            "  - 暂不 VACUUM（Cursor 在运行）；退出后执行 `cursor-clean vacuum`"
-        ),
-        "hint_run_vacuum": (
-            "提示: 完全退出 Cursor 后执行 `cursor-clean vacuum`，才能把 state.vscdb 文件缩小。"
-        ),
+        "vacuum_auto_skip": "Cursor 运行中 — 先清 agent/聊天，跳过 VACUUM。稍后: cursor-clean vacuum",
+        "plan_vacuum_later": "  - 稍后 VACUUM（Cursor 在运行）: cursor-clean vacuum",
+        "hint_run_vacuum": "下一步: 退出 Cursor，再执行  cursor-clean vacuum",
+        "bar_delete_agents": "agent",
+        "bar_delete_chats": "聊天",
+        "bar_vacuum": "VACUUM",
+        "vacuum_locked_hint": " 请退出 Cursor 后执行: cursor-clean vacuum",
+        "chat_failed": "聊天清理失败: {err}",
+        "agent_failed": "Agent 清理失败: {err}",
+        "cache_failed": "缓存清理失败: {err}",
+        "vacuum_failed_err": "VACUUM 失败: {err}.{hint}",
+        "tip_quit_first": "请先完全退出 Cursor 再重试。",
     },
 }
 

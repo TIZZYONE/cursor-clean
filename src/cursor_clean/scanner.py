@@ -85,7 +85,7 @@ def _composer_cutoff_ms(keep_days: int) -> int:
 
 def scan_old_composers(
     db_path: Path,
-    keep_days: int = 90,
+    keep_days: int = 45,
     *,
     deep: bool = False,
 ) -> ChatCleanupPlan:

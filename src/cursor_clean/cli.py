@@ -1,4 +1,4 @@
-"""Command-line interface for cursor-clean."""
+"""CLI for cursor-clean."""
 
 from __future__ import annotations
 
@@ -17,76 +17,44 @@ from cursor_clean.paths import resolve_paths
 from cursor_clean.process import cursor_process_count
 from cursor_clean.scanner import ScanReport, scan, scan_agent_versions
 
+DEFAULT_KEEP_DAYS = 45
+
 
 def _build_parser() -> argparse.ArgumentParser:
+    # Shared flags live on each subcommand so `cursor-clean clean --lang zh` works.
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument("--lang", choices=["zh", "en"], default=None, help="UI language")
+    shared.add_argument(
+        "--keep-days",
+        type=int,
+        default=DEFAULT_KEEP_DAYS,
+        help=f"Keep chats newer than N days (default {DEFAULT_KEEP_DAYS})",
+    )
+    shared.add_argument("--data-dir", type=Path, default=None, help="Cursor Roaming root")
+    shared.add_argument("--deep", action="store_true", help="Estimate chat blob bytes")
+    shared.add_argument("--include-cache", action="store_true", help="Clear CachedData/logs too")
+
     parser = argparse.ArgumentParser(
         prog="cursor-clean",
-        description=(
-            "Scan and clean Cursor Roaming data (Windows): "
-            "old chats + unused cursor-agent versions. "
-            "Never deletes state.vscdb.backup. Zero deps, no local DB."
-        ),
+        description="Clean Cursor Roaming data (old chats + unused agent versions).",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument(
-        "--lang",
-        choices=["zh", "en"],
-        default=None,
-        help="UI language: zh / en. Or set CURSOR_CLEAN_LANG. Default: ask once.",
-    )
-
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def add_common(p: argparse.ArgumentParser) -> None:
-        p.add_argument(
-            "--keep-days",
-            type=int,
-            default=90,
-            help="Keep chats within this many days (default: 90).",
-        )
-        p.add_argument(
-            "--data-dir",
-            type=Path,
-            default=None,
-            help="Override Cursor Roaming root (default: %%APPDATA%%\\Cursor).",
-        )
-        p.add_argument(
-            "--deep",
-            action="store_true",
-            help="Estimate reclaimable chat blob size (slower).",
-        )
-        p.add_argument(
-            "--include-cache",
-            action="store_true",
-            help="Also consider CachedData and logs (off by default).",
-        )
+    sub.add_parser("scan", parents=[shared], help="Preview reclaimable items")
 
-    p_scan = sub.add_parser("scan", help="Scan only (no changes).")
-    add_common(p_scan)
+    p_clean = sub.add_parser("clean", parents=[shared], help="Clean agents + chats + vacuum")
+    p_clean.add_argument("-y", "--yes", action="store_true", help="No confirmation")
+    p_clean.add_argument("--skip-chats", action="store_true")
+    p_clean.add_argument("--skip-agents", action="store_true")
+    p_clean.add_argument("--skip-vacuum", action="store_true")
+    p_clean.add_argument("--force", action="store_true", help="VACUUM even if Cursor running")
 
-    p_clean = sub.add_parser("clean", help="Scan, confirm, then clean.")
-    add_common(p_clean)
-    p_clean.add_argument("-y", "--yes", action="store_true", help="Skip confirmation.")
-    p_clean.add_argument("--skip-chats", action="store_true", help="Do not delete old chats.")
-    p_clean.add_argument("--skip-agents", action="store_true", help="Do not delete old agents.")
-    p_clean.add_argument(
-        "--skip-vacuum",
-        action="store_true",
-        help="Skip VACUUM (file may not shrink until later).",
-    )
-    p_clean.add_argument(
-        "--force",
-        action="store_true",
-        help="Try VACUUM even if Cursor appears running (not recommended).",
-    )
-
-    p_vac = sub.add_parser("vacuum", help="Only VACUUM state.vscdb. Quit Cursor first.")
-    p_vac.add_argument("--data-dir", type=Path, default=None)
+    p_vac = sub.add_parser("vacuum", parents=[shared], help="Shrink state.vscdb (quit Cursor)")
     p_vac.add_argument("--force", action="store_true")
 
-    p_agents = sub.add_parser("clean-agents", help="Only delete old agent versions.")
-    p_agents.add_argument("--data-dir", type=Path, default=None)
-    p_agents.add_argument("-y", "--yes", action="store_true")
+    p_ag = sub.add_parser("clean-agents", parents=[shared], help="Only delete old agent versions")
+    p_ag.add_argument("-y", "--yes", action="store_true")
     return parser
 
 
@@ -95,23 +63,20 @@ def _print_report(report: ScanReport) -> None:
     print(t("state_db", size=format_bytes(report.state_db_bytes)))
     print(t("state_backup", size=format_bytes(report.state_db_backup_bytes)))
     print()
-
-    if report.chat is not None:
+    if report.chat is None:
+        print(t("chats_unavailable"))
+    else:
         cutoff = datetime.fromtimestamp(report.chat.cutoff_ms / 1000, tz=timezone.utc)
         print(t("chats_title"))
         print(t("keep_days", days=report.chat.keep_days))
         print(t("cutoff", cutoff=cutoff.strftime("%Y-%m-%d %H:%M")))
         print(t("total", n=report.chat.total_composers))
         print(t("older", n=report.chat.old_composers))
-        if report.chat.estimated_bytes is not None:
-            print(t("est_blobs", size=format_bytes(report.chat.estimated_bytes)))
-        else:
+        if report.chat.estimated_bytes is None:
             print(t("est_blobs_hint"))
-        print()
-    else:
-        print(t("chats_unavailable"))
-        print()
-
+        else:
+            print(t("est_blobs", size=format_bytes(report.chat.estimated_bytes)))
+    print()
     print(t("agents_title"))
     if not report.agent_versions:
         print(t("agents_none"))
@@ -121,52 +86,42 @@ def _print_report(report: ScanReport) -> None:
             print(f"  [{mark}] {v.name:40} {format_bytes(v.size_bytes)}")
         print(t("reclaimable", size=format_bytes(report.agent_reclaimable_bytes)))
     print()
-
-    if report.cached_data_bytes or report.logs_bytes:
-        print(t("cache_title"))
-        print(f"  CachedData: {format_bytes(report.cached_data_bytes)}")
-        print(f"  logs:       {format_bytes(report.logs_bytes)}")
-        print()
-
     for w in report.warnings:
         print(t("warning", msg=w))
 
 
-def _ensure_cursor_quit(*, force: bool) -> int | None:
-    """Hard-stop only when exclusive DB access is required (vacuum)."""
+def _require_cursor_quit(*, force: bool) -> int | None:
     n = cursor_process_count()
-    if n > 0:
-        print(t("cursor_count", n=n), file=sys.stderr)
-    if n > 0 and not force:
-        print(t("cursor_running"), file=sys.stderr)
-        print(t("tip_quit_first"), file=sys.stderr)
-        return 2
-    if n > 0 and force:
+    if n <= 0:
+        return None
+    print(t("cursor_count", n=n), file=sys.stderr)
+    if force:
         print(t("cursor_running_warn"), file=sys.stderr)
-    return None
+        return None
+    print(t("cursor_running"), file=sys.stderr)
+    return 2
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
-    report = scan(
-        data_dir=args.data_dir,
-        keep_days=args.keep_days,
-        deep=args.deep,
-        include_cache=args.include_cache,
+    _print_report(
+        scan(
+            data_dir=args.data_dir,
+            keep_days=args.keep_days,
+            deep=args.deep,
+            include_cache=args.include_cache,
+        )
     )
-    _print_report(report)
     return 0
 
 
 def cmd_clean(args: argparse.Namespace) -> int:
     cursor_n = cursor_process_count()
-    # Agents + chat deletes do NOT require quitting Cursor.
-    # VACUUM needs exclusive lock — auto-skip if Cursor is running (unless --force).
     want_vacuum = not args.skip_vacuum
     if want_vacuum and cursor_n > 0 and not args.force:
         print(t("cursor_count", n=cursor_n), file=sys.stderr)
         print(t("vacuum_auto_skip"), file=sys.stderr)
         want_vacuum = False
-    elif want_vacuum and cursor_n > 0 and args.force:
+    elif want_vacuum and cursor_n > 0:
         print(t("cursor_running_warn"), file=sys.stderr)
 
     report = scan(
@@ -178,45 +133,27 @@ def cmd_clean(args: argparse.Namespace) -> int:
     _print_report(report)
 
     will_chats = (not args.skip_chats) and report.chat and report.chat.old_composers > 0
-    will_agents = (not args.skip_agents) and report.agent_reclaimable_bytes > 0
-    will_cache = bool(args.include_cache) and (
-        report.cached_data_bytes > 0 or report.logs_bytes > 0
-    )
-    will_vacuum = want_vacuum
-
-    if not (will_chats or will_agents or will_cache or will_vacuum):
+    will_agents = (not args.skip_agents) and any(not v.keep for v in report.agent_versions)
+    will_cache = bool(args.include_cache) and (report.cached_data_bytes or report.logs_bytes)
+    if not (will_chats or will_agents or will_cache or want_vacuum):
         print(t("nothing"))
         return 0
 
     print(t("planned"))
     if will_agents:
-        print(
-            t(
-                "plan_agents",
-                n=sum(1 for v in report.agent_versions if not v.keep),
-                size=format_bytes(report.agent_reclaimable_bytes),
-            )
-        )
+        n = sum(1 for v in report.agent_versions if not v.keep)
+        print(t("plan_agents", n=n, size=format_bytes(report.agent_reclaimable_bytes)))
     if will_chats:
         print(t("plan_chats", n=report.chat.old_composers))
-    if will_vacuum:
+    if want_vacuum:
         print(t("plan_vacuum"))
     elif not args.skip_vacuum and cursor_n > 0:
         print(t("plan_vacuum_later"))
-    if will_cache:
-        print(
-            t(
-                "plan_cache",
-                size=format_bytes(report.cached_data_bytes + report.logs_bytes),
-            )
-        )
     print(t("plan_backup"))
 
-    if not args.yes:
-        answer = input(t("proceed")).strip().lower()
-        if answer not in {"y", "yes"}:
-            print(t("aborted"))
-            return 1
+    if not args.yes and input(t("proceed")).strip().lower() not in {"y", "yes"}:
+        print(t("aborted"))
+        return 1
 
     print()
     result = clean(
@@ -224,9 +161,8 @@ def cmd_clean(args: argparse.Namespace) -> int:
         clean_chats=not args.skip_chats,
         clean_agents=not args.skip_agents,
         include_cache=args.include_cache,
-        do_vacuum=will_vacuum,
+        do_vacuum=want_vacuum,
     )
-
     print()
     print(t("done"))
     if result.agent_deleted:
@@ -254,21 +190,17 @@ def cmd_clean(args: argparse.Namespace) -> int:
             vacuum=t("vacuum_ok") if result.vacuum_done else "",
         )
     )
-    if result.vacuum_skipped or (not will_vacuum and not args.skip_vacuum):
+    if result.vacuum_skipped or (not want_vacuum and not args.skip_vacuum):
         print(t("hint_run_vacuum"))
-    if result.cache_bytes_freed:
-        print(t("cache_freed", size=format_bytes(result.cache_bytes_freed)))
     for err in result.errors:
         print(t("error", msg=err), file=sys.stderr)
     return 1 if result.errors else 0
 
 
 def cmd_vacuum(args: argparse.Namespace) -> int:
-    blocked = _ensure_cursor_quit(force=args.force)
-    if blocked is not None:
-        return blocked
-    paths = resolve_paths(args.data_dir)
-    db = paths["state_db"]
+    if _require_cursor_quit(force=args.force) is not None:
+        return 2
+    db = resolve_paths(args.data_dir)["state_db"]
     if not db.is_file():
         print(t("db_missing", path=db), file=sys.stderr)
         return 1
@@ -282,19 +214,21 @@ def cmd_vacuum(args: argparse.Namespace) -> int:
 
 
 def cmd_clean_agents(args: argparse.Namespace) -> int:
-    paths = resolve_paths(args.data_dir)
-    versions = scan_agent_versions(paths["agent_versions"])
+    versions = scan_agent_versions(resolve_paths(args.data_dir)["agent_versions"])
     to_delete = [v for v in versions if not v.keep]
     if not to_delete:
         print(t("no_agents"))
         return 0
-    total = sum(v.size_bytes for v in to_delete)
-    print(t("will_agents", n=len(to_delete), size=format_bytes(total)))
-    if not args.yes:
-        answer = input(t("proceed")).strip().lower()
-        if answer not in {"y", "yes"}:
-            print(t("aborted"))
-            return 1
+    print(
+        t(
+            "will_agents",
+            n=len(to_delete),
+            size=format_bytes(sum(v.size_bytes for v in to_delete)),
+        )
+    )
+    if not args.yes and input(t("proceed")).strip().lower() not in {"y", "yes"}:
+        print(t("aborted"))
+        return 1
     deleted, freed = clean_agent_versions(versions)
     print(t("agents_done", n=len(deleted), size=format_bytes(freed)))
     return 0
@@ -304,24 +238,15 @@ def main(argv: list[str] | None = None) -> int:
     configure_stdio()
     parser = _build_parser()
     args = parser.parse_args(argv)
-
-    interactive_lang = not getattr(args, "yes", False)
-    lang = resolve_lang(cli_lang=args.lang, interactive=interactive_lang)
-    set_lang(lang)
-
-    if getattr(args, "keep_days", 90) < 1:
+    set_lang(resolve_lang(cli_lang=args.lang, interactive=not getattr(args, "yes", False)))
+    if args.keep_days < 1:
         parser.error("--keep-days must be >= 1")
-
-    if args.command == "scan":
-        return cmd_scan(args)
-    if args.command == "clean":
-        return cmd_clean(args)
-    if args.command == "vacuum":
-        return cmd_vacuum(args)
-    if args.command == "clean-agents":
-        return cmd_clean_agents(args)
-    parser.error(f"unknown command: {args.command}")
-    return 2
+    return {
+        "scan": cmd_scan,
+        "clean": cmd_clean,
+        "vacuum": cmd_vacuum,
+        "clean-agents": cmd_clean_agents,
+    }[args.command](args)
 
 
 if __name__ == "__main__":

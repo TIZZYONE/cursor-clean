@@ -1,4 +1,4 @@
-"""ASCII progress bar for long-running cleanup steps."""
+"""ASCII progress bar."""
 
 from __future__ import annotations
 
@@ -7,18 +7,17 @@ import threading
 import time
 from typing import Any
 
-
-DEFAULT_BAR_WIDTH = 60  # ~50% longer than the original 40
+BAR_WIDTH = 50
 
 
 class ProgressBar:
-    """In-place progress bar: [####------] 40% label 12.3s"""
+    """Single-line progress: [####----] 40.0%  12/30  label  3.2s"""
 
     def __init__(
         self,
         total: int | None = None,
         *,
-        width: int = DEFAULT_BAR_WIDTH,
+        width: int = BAR_WIDTH,
         label: str = "",
         indeterminate: bool = False,
     ) -> None:
@@ -30,11 +29,10 @@ class ProgressBar:
         self._last_draw = 0.0
         self._finished = False
         self._lock = threading.Lock()
-        self._heartbeat: threading.Thread | None = None
         self._stop_hb = threading.Event()
+        self._heartbeat: threading.Thread | None = None
 
     def start_heartbeat(self, interval: float = 0.5) -> None:
-        """Keep redrawing elapsed time even when no sqlite callbacks fire."""
         if self._heartbeat and self._heartbeat.is_alive():
             return
 
@@ -42,7 +40,7 @@ class ProgressBar:
             while not self._stop_hb.wait(interval):
                 self.update(force=True)
 
-        self._heartbeat = threading.Thread(target=_loop, name="progress-hb", daemon=True)
+        self._heartbeat = threading.Thread(target=_loop, daemon=True)
         self._heartbeat.start()
 
     def stop_heartbeat(self) -> None:
@@ -51,27 +49,23 @@ class ProgressBar:
             self._heartbeat.join(timeout=1.0)
         self._heartbeat = None
 
-    def update(self, current: int | None = None, *, force: bool = False, label: str | None = None) -> None:
+    def update(
+        self,
+        current: int | None = None,
+        *,
+        force: bool = False,
+        label: str | None = None,
+    ) -> None:
         with self._lock:
             if current is not None:
                 self.current = current
             if label is not None:
                 self.label = label
             now = time.time()
-            if not force and (now - self._last_draw) < 0.15:
+            if not force and now - self._last_draw < 0.12:
                 return
             self._last_draw = now
             self._draw()
-
-    def tick(self) -> None:
-        self.current += 1
-        self.update(force=False)
-
-    def set_fraction(self, fraction: float) -> None:
-        frac = max(0.0, min(0.99, float(fraction)))
-        self.total = 100
-        self.current = int(frac * 100)
-        self.update(force=True)
 
     def finish(self, *, ok: bool = True) -> None:
         self.stop_heartbeat()
@@ -88,42 +82,30 @@ class ProgressBar:
     def _draw(self, *, final: bool = False, ok: bool = True) -> None:
         elapsed = time.time() - self._start
         if self.total is not None:
-            pct = 100.0 if final else min(99.0, 100.0 * self.current / max(1, self.total))
+            pct = 100.0 if final else min(99.9, 100.0 * self.current / self.total)
+            if final:
+                pct = 100.0
             filled = int(self.width * pct / 100.0)
             if final:
                 filled = self.width
-                pct = 100.0
             bar = "#" * filled + "-" * (self.width - filled)
-            suffix = f"{pct:5.1f}%"
+            counts = f"{self.current}/{self.total}"
+            mid = f"{pct:5.1f}%  {counts}"
         else:
             pos = int(elapsed * 3) % (self.width + 6)
-            block = 6
-            bar_chars = ["-"] * self.width
-            for i in range(block):
+            chars = ["-"] * self.width
+            for i in range(6):
                 idx = pos - i
                 if 0 <= idx < self.width:
-                    bar_chars[idx] = "#"
-            bar = "".join(bar_chars)
-            suffix = " run "
+                    chars[idx] = "#"
+            bar = "".join(chars)
+            mid = "working"
 
-        mark = "" if ok else " !"
-        line = f"\r[{bar}] {suffix} {self.label} {elapsed:6.1f}s{mark}"
-        line = line.ljust(self.width + 56)
-        sys.stdout.write(line)
+        flag = "" if ok else " ERR"
+        line = f"\r  [{bar}] {mid} | {self.label} | {elapsed:5.0f}s{flag}"
+        sys.stdout.write(line.ljust(self.width + 72))
         sys.stdout.flush()
 
 
-def attach_sqlite_progress(
-    con: Any,
-    bar: ProgressBar,
-    *,
-    every: int = 2000,
-) -> None:
-    """Nudge the bar from SQLite VM opcodes (supplement to heartbeat)."""
-
-    def _handler() -> int:
-        # Indeterminate / known-total: just force a redraw; heartbeat owns timing.
-        bar.update(force=True)
-        return 0
-
-    con.set_progress_handler(_handler, every)
+def attach_sqlite_progress(con: Any, bar: ProgressBar, *, every: int = 2000) -> None:
+    con.set_progress_handler(lambda: bar.update(force=True) or 0, every)
