@@ -9,7 +9,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cursor_clean import __version__
-from cursor_clean.cleaner import clean, clean_agent_versions, vacuum_state_db
+from cursor_clean.cleaner import (
+    clean,
+    clean_agent_versions,
+    count_agent_kv,
+    count_orphan_composers,
+    vacuum_space_ok,
+    vacuum_state_db,
+)
 from cursor_clean.console import configure_stdio
 from cursor_clean.format_utils import format_bytes
 from cursor_clean.i18n import resolve_lang, set_lang, t
@@ -21,7 +28,6 @@ DEFAULT_KEEP_DAYS = 45
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    # Shared flags live on each subcommand so `cursor-clean clean --lang zh` works.
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument("--lang", choices=["zh", "en"], default=None, help="UI language")
     shared.add_argument(
@@ -36,19 +42,29 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="cursor-clean",
-        description="Clean Cursor Roaming data (old chats + unused agent versions).",
+        description="Clean Cursor Roaming data (old chats, orphans, backup, agents).",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("scan", parents=[shared], help="Preview reclaimable items")
 
-    p_clean = sub.add_parser("clean", parents=[shared], help="Clean agents + chats + vacuum")
+    p_clean = sub.add_parser(
+        "clean",
+        parents=[shared],
+        help="Clean agents + chats + orphans + backup + vacuum",
+    )
     p_clean.add_argument("-y", "--yes", action="store_true", help="No confirmation")
     p_clean.add_argument("--skip-chats", action="store_true")
     p_clean.add_argument("--skip-agents", action="store_true")
+    p_clean.add_argument("--skip-orphans", action="store_true", help="Keep orphan session KV")
+    p_clean.add_argument("--keep-backup", action="store_true", help="Keep state.vscdb.backup")
     p_clean.add_argument("--skip-vacuum", action="store_true")
-    p_clean.add_argument("--force", action="store_true", help="VACUUM even if Cursor running")
+    p_clean.add_argument(
+        "--force",
+        action="store_true",
+        help="VACUUM even if Cursor running or free disk < DB size",
+    )
 
     p_vac = sub.add_parser("vacuum", parents=[shared], help="Shrink state.vscdb (quit Cursor)")
     p_vac.add_argument("--force", action="store_true")
@@ -58,10 +74,31 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _print_report(report: ScanReport) -> None:
+def _print_disk_and_gc(db_path: Path, *, agent_kv_rows: int) -> None:
+    ok, free, need = vacuum_space_ok(db_path)
+    print(t("disk_free", free=format_bytes(free), need=format_bytes(need)))
+    print(t("disk_free_ok") if ok else t("disk_free_low", need=format_bytes(need)))
+    if agent_kv_rows > 0:
+        print(
+            t(
+                "hint_gc",
+                need=format_bytes(need),
+                free=format_bytes(free),
+                status=t("hint_gc_ok") if ok else t("hint_gc_low"),
+            )
+        )
+
+
+def _print_report(
+    report: ScanReport,
+    *,
+    agent_kv_rows: int = 0,
+    orphan_composers: int = 0,
+) -> None:
     print(t("data_root", path=report.paths["root"]))
     print(t("state_db", size=format_bytes(report.state_db_bytes)))
     print(t("state_backup", size=format_bytes(report.state_db_backup_bytes)))
+    _print_disk_and_gc(report.paths["state_db"], agent_kv_rows=agent_kv_rows)
     print()
     if report.chat is None:
         print(t("chats_unavailable"))
@@ -76,6 +113,12 @@ def _print_report(report: ScanReport) -> None:
             print(t("est_blobs_hint"))
         else:
             print(t("est_blobs", size=format_bytes(report.chat.estimated_bytes)))
+    print()
+    print(t("orphan_title"))
+    print(t("orphan_count", n=orphan_composers))
+    print()
+    print(t("agent_kv_title"))
+    print(t("agent_kv_count", n=agent_kv_rows))
     print()
     print(t("agents_title"))
     if not report.agent_versions:
@@ -103,13 +146,17 @@ def _require_cursor_quit(*, force: bool) -> int | None:
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
+    report = scan(
+        data_dir=args.data_dir,
+        keep_days=args.keep_days,
+        deep=args.deep,
+        include_cache=args.include_cache,
+    )
+    db = report.paths["state_db"]
     _print_report(
-        scan(
-            data_dir=args.data_dir,
-            keep_days=args.keep_days,
-            deep=args.deep,
-            include_cache=args.include_cache,
-        )
+        report,
+        agent_kv_rows=count_agent_kv(db),
+        orphan_composers=count_orphan_composers(db),
     )
     return 0
 
@@ -130,26 +177,46 @@ def cmd_clean(args: argparse.Namespace) -> int:
         deep=args.deep,
         include_cache=args.include_cache,
     )
-    _print_report(report)
+    db = report.paths["state_db"]
+    agent_kv_rows = count_agent_kv(db)
+    orphan_n = count_orphan_composers(db)
+    _print_report(report, agent_kv_rows=agent_kv_rows, orphan_composers=orphan_n)
 
     will_chats = (not args.skip_chats) and report.chat and report.chat.old_composers > 0
     will_agents = (not args.skip_agents) and any(not v.keep for v in report.agent_versions)
+    will_orphans = (not args.skip_orphans) and orphan_n > 0
+    will_backup = (not args.keep_backup) and report.state_db_backup_bytes > 0
     will_cache = bool(args.include_cache) and (report.cached_data_bytes or report.logs_bytes)
-    if not (will_chats or will_agents or will_cache or want_vacuum):
+    if not (will_chats or will_agents or will_orphans or will_backup or will_cache or want_vacuum):
         print(t("nothing"))
+        if agent_kv_rows > 0:
+            ok, free, need = vacuum_space_ok(db)
+            print(
+                t(
+                    "hint_gc",
+                    need=format_bytes(need),
+                    free=format_bytes(free),
+                    status=t("hint_gc_ok") if ok else t("hint_gc_low"),
+                )
+            )
         return 0
 
     print(t("planned"))
+    if will_backup:
+        print(t("plan_backup", size=format_bytes(report.state_db_backup_bytes)))
+    else:
+        print(t("plan_keep_backup"))
     if will_agents:
         n = sum(1 for v in report.agent_versions if not v.keep)
         print(t("plan_agents", n=n, size=format_bytes(report.agent_reclaimable_bytes)))
     if will_chats:
         print(t("plan_chats", n=report.chat.old_composers))
+    if will_orphans:
+        print(t("plan_orphans", n=orphan_n))
     if want_vacuum:
         print(t("plan_vacuum"))
     elif not args.skip_vacuum and cursor_n > 0:
         print(t("plan_vacuum_later"))
-    print(t("plan_backup"))
 
     if not args.yes and input(t("proceed")).strip().lower() not in {"y", "yes"}:
         print(t("aborted"))
@@ -160,11 +227,16 @@ def cmd_clean(args: argparse.Namespace) -> int:
         report,
         clean_chats=not args.skip_chats,
         clean_agents=not args.skip_agents,
+        clean_orphans=not args.skip_orphans,
+        delete_backup=not args.keep_backup,
         include_cache=args.include_cache,
         do_vacuum=want_vacuum,
+        force_vacuum=args.force,
     )
     print()
     print(t("done"))
+    if result.backup_bytes_freed:
+        print(t("backup_removed", size=format_bytes(result.backup_bytes_freed)))
     if result.agent_deleted:
         print(
             t(
@@ -181,6 +253,14 @@ def cmd_clean(args: argparse.Namespace) -> int:
                 kv=result.chat_deleted_kv_rows,
             )
         )
+    if not args.skip_orphans:
+        print(
+            t(
+                "orphans_removed",
+                composers=result.orphan_composers,
+                kv=result.orphan_kv_deleted,
+            )
+        )
     print(
         t(
             "state_result",
@@ -192,6 +272,16 @@ def cmd_clean(args: argparse.Namespace) -> int:
     )
     if result.vacuum_skipped or (not want_vacuum and not args.skip_vacuum):
         print(t("hint_run_vacuum"))
+    ok, free, need = vacuum_space_ok(report.paths["state_db"])
+    if agent_kv_rows > 0:
+        print(
+            t(
+                "hint_gc",
+                need=format_bytes(need),
+                free=format_bytes(free),
+                status=t("hint_gc_ok") if ok else t("hint_gc_low"),
+            )
+        )
     for err in result.errors:
         print(t("error", msg=err), file=sys.stderr)
     return 1 if result.errors else 0
@@ -204,6 +294,12 @@ def cmd_vacuum(args: argparse.Namespace) -> int:
     if not db.is_file():
         print(t("db_missing", path=db), file=sys.stderr)
         return 1
+    ok, free, need = vacuum_space_ok(db)
+    if not ok and not args.force:
+        print(t("vacuum_space_skip", free=format_bytes(free), need=format_bytes(need)), file=sys.stderr)
+        return 1
+    if not ok:
+        print(t("vacuum_space_force", free=format_bytes(free), need=format_bytes(need)), file=sys.stderr)
     try:
         vacuum_state_db(db)
     except sqlite3.Error as exc:

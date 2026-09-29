@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cursor-clean"
-version = "0.1.7"
-description = "Scan and clean Cursor Roaming data: old chats and unused agent versions."
+version = "0.1.8"
+description = "Clean Cursor Roaming data: old chats, orphan session KV, backup, unused agents."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
