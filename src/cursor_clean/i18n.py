@@ -84,6 +84,20 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "bar_delete_agents": "agents",
         "bar_delete_chats": "chats",
         "bar_vacuum": "VACUUM",
+        "progress_size_note": (
+            "Note: disk size of state.vscdb usually drops ONLY after VACUUM finishes."
+        ),
+        "progress_vacuum_explain": (
+            "VACUUM copies the whole DB; progress is live activity (elapsed + db/wal size), "
+            "not 'percent of folder cleaned'. Size shrinks when this step completes."
+        ),
+        "progress_wal_warn": (
+            "WARNING: state.vscdb-wal is already {gb:.2f} GB. Quit Cursor fully, then continue; "
+            "otherwise the folder can grow instead of shrink."
+        ),
+        "progress_checkpoint": "Running wal_checkpoint(TRUNCATE) first ...",
+        "agent_partial_fail": "{n} agent folder(s) could not be deleted (often locked by Cursor).",
+        "cursor_count": "Detected {n} Cursor process(es).",
     },
     "zh": {
         "choose_lang": "选择语言 / Select language:\n  1) 中文\n  2) English\n请输入 1 或 2 [默认 1]: ",
@@ -159,6 +173,20 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "bar_delete_agents": "删agent",
         "bar_delete_chats": "删聊天",
         "bar_vacuum": "VACUUM",
+        "progress_size_note": (
+            "说明: state.vscdb 的磁盘占用通常要等 VACUUM 全部结束后才会变小。"
+        ),
+        "progress_vacuum_explain": (
+            "VACUUM 会整库重写；进度显示的是活动状态（已用时 + db/wal 大小），"
+            "不是「文件夹已清百分之几」。体积要等本步骤完成后才会下降。"
+        ),
+        "progress_wal_warn": (
+            "警告: state.vscdb-wal 已有 {gb:.2f} GB。请先彻底退出 Cursor 再继续，"
+            "否则目录可能越清越大。"
+        ),
+        "progress_checkpoint": "先执行 wal_checkpoint(TRUNCATE) ...",
+        "agent_partial_fail": "有 {n} 个 agent 目录删不掉（多为被 Cursor 占用）。",
+        "cursor_count": "检测到 {n} 个 Cursor 进程。",
     },
 }
 

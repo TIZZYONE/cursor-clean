@@ -134,6 +134,8 @@ def _print_report(report: ScanReport) -> None:
 
 def _ensure_cursor_quit(*, force: bool) -> int | None:
     n = cursor_process_count()
+    if n > 0:
+        print(t("cursor_count", n=n), file=sys.stderr)
     if n > 0 and not force:
         print(t("cursor_running"), file=sys.stderr)
         print(t("tip_quit_first"), file=sys.stderr)
