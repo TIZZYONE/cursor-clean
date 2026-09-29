@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from cursor_clean.i18n import t
+from cursor_clean.progress import ProgressBar, attach_sqlite_progress
 from cursor_clean.scanner import AgentVersionInfo, ChatCleanupPlan, ScanReport, _dir_size, _file_size
 
 ProgressFn = Callable[[str], None]
@@ -56,12 +57,15 @@ def delete_old_chats(
     progress(t("progress_del_chats", n=len(plan.old_composer_ids)))
     t0 = time.time()
     con = _open_rw(db_path)
+    bar = ProgressBar(total=100, label=t("bar_delete_chats"), width=40)
     try:
         con.execute("CREATE TEMP TABLE old_c (id TEXT PRIMARY KEY)")
         con.executemany(
             "INSERT OR IGNORE INTO old_c(id) VALUES (?)",
             [(i,) for i in plan.old_composer_ids],
         )
+        # Rough: large DBs often spend most time in the KV DELETE.
+        attach_sqlite_progress(con, bar, every=2000, estimate_seconds=max(20.0, len(plan.old_composer_ids) * 0.05))
 
         before_kv = con.total_changes
         con.execute(
@@ -82,11 +86,14 @@ def delete_old_chats(
             """
         )
         kv_deleted = con.total_changes - before_kv
+        bar.set_fraction(0.9)
 
         before_h = con.total_changes
         con.execute("DELETE FROM composerHeaders WHERE composerId IN (SELECT id FROM old_c)")
         headers_deleted = con.total_changes - before_h
         con.commit()
+        con.set_progress_handler(None, 0)
+        bar.finish()
         progress(
             t(
                 "progress_del_chats_done",
@@ -96,6 +103,10 @@ def delete_old_chats(
             )
         )
         return headers_deleted, kv_deleted
+    except Exception:
+        con.set_progress_handler(None, 0)
+        bar.finish(ok=False)
+        raise
     finally:
         con.close()
 
@@ -107,13 +118,24 @@ def vacuum_state_db(
 ) -> None:
     """VACUUM state.vscdb. Needs Cursor fully quit (exclusive lock)."""
     before = _file_size(db_path)
-    progress(t("progress_vacuum", gb=before / (1024**3)))
+    gb = before / (1024**3)
+    progress(t("progress_vacuum", gb=gb))
+    # Heuristic: ~40–90s per GB depending on disk; keep bar moving via handler + time.
+    estimate = max(60.0, gb * 50.0)
     t0 = time.time()
+    bar = ProgressBar(total=100, label=t("bar_vacuum"), width=40)
     con = sqlite3.connect(str(db_path), timeout=10)
     try:
         con.execute("PRAGMA busy_timeout=10000")
+        attach_sqlite_progress(con, bar, every=2000, estimate_seconds=estimate)
         con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         con.execute("VACUUM")
+        con.set_progress_handler(None, 0)
+        bar.finish()
+    except Exception:
+        con.set_progress_handler(None, 0)
+        bar.finish(ok=False)
+        raise
     finally:
         con.close()
     after = _file_size(db_path)
@@ -138,14 +160,21 @@ def clean_agent_versions(
         return [], 0
 
     progress(t("progress_del_agents", n=len(to_delete)))
+    bar = ProgressBar(total=len(to_delete), label=t("bar_delete_agents"), width=40)
     deleted: list[str] = []
     freed = 0
-    for item in to_delete:
-        size = item.size_bytes
-        progress(t("progress_del_agent_one", name=item.name, mb=size / (1024**2)))
-        shutil.rmtree(item.path, ignore_errors=False)
-        deleted.append(item.name)
-        freed += size
+    try:
+        for i, item in enumerate(to_delete, start=1):
+            size = item.size_bytes
+            bar.label = f"{t('bar_delete_agents')} {item.name}"
+            shutil.rmtree(item.path, ignore_errors=False)
+            deleted.append(item.name)
+            freed += size
+            bar.update(i, force=True)
+        bar.finish()
+    except Exception:
+        bar.finish(ok=False)
+        raise
     progress(t("progress_agents_freed", gb=freed / (1024**3)))
     return deleted, freed
 

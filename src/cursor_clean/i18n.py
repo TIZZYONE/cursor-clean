@@ -67,7 +67,6 @@ _MESSAGES: dict[str, dict[str, str]] = {
         ),
         "progress_vacuum_done": "  VACUUM done in {sec:.1f}s: {before:.2f} GB -> {after:.2f} GB",
         "progress_del_agents": "Deleting {n} old agent version(s) ...",
-        "progress_del_agent_one": "  remove {name} ({mb:.1f} MB)",
         "progress_agents_freed": "  agent versions freed {gb:.2f} GB",
         "progress_cache": "Clearing CachedData / logs ...",
         "progress_cache_done": "  cache/logs freed {mb:.1f} MB",
@@ -82,6 +81,9 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "scan_db_fail": "Failed to read state.vscdb: {err}",
         "scan_db_missing": "state.vscdb not found: {path}",
         "tip_quit_first": "Tip: fully quit Cursor before clean/vacuum, or the tool may hang.",
+        "bar_delete_agents": "agents",
+        "bar_delete_chats": "chats",
+        "bar_vacuum": "VACUUM",
     },
     "zh": {
         "choose_lang": "选择语言 / Select language:\n  1) 中文\n  2) English\n请输入 1 或 2 [默认 1]: ",
@@ -141,7 +143,6 @@ _MESSAGES: dict[str, dict[str, str]] = {
         ),
         "progress_vacuum_done": "  VACUUM 完成，用时 {sec:.1f}s: {before:.2f} GB -> {after:.2f} GB",
         "progress_del_agents": "正在删除 {n} 个旧 agent 版本 ...",
-        "progress_del_agent_one": "  删除 {name}（{mb:.1f} MB）",
         "progress_agents_freed": "  agent 版本已释放 {gb:.2f} GB",
         "progress_cache": "正在清理 CachedData / logs ...",
         "progress_cache_done": "  缓存/日志已释放 {mb:.1f} MB",
@@ -155,6 +156,9 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "scan_db_fail": "读取 state.vscdb 失败: {err}",
         "scan_db_missing": "未找到 state.vscdb: {path}",
         "tip_quit_first": "提示: 清理/压缩前请先完全退出 Cursor，否则可能卡住。",
+        "bar_delete_agents": "删agent",
+        "bar_delete_chats": "删聊天",
+        "bar_vacuum": "VACUUM",
     },
 }
 
