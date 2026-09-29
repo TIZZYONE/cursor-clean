@@ -74,7 +74,10 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "progress_size_note": (
             "Chat rows are removed now; file size drops after VACUUM (quit Cursor first)."
         ),
-        "progress_vacuum_explain": "Exclusive lock required. Bar shows elapsed time + live db/wal size.",
+        "progress_vacuum_explain": (
+            "Bar shows estimated % from elapsed time (VACUUM has no native progress). "
+            "Ends at 100% when finished."
+        ),
         "progress_wal_warn": "WARNING: wal is {gb:.2f} GB — quit Cursor fully before VACUUM.",
         "progress_checkpoint": "wal_checkpoint(TRUNCATE) ...",
         "agent_skipped": "Skipped {n} locked folder(s); deleted ones are gone (re-run skips them).",
@@ -157,7 +160,7 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "phase_vacuum": "=== [vacuum] 压缩 state.vscdb（{gb:.2f} GB）===",
         "resume_safe": "可重复执行：已删除的内容会自动跳过。",
         "progress_size_note": "聊天会立刻从库中删除；文件体积需退出 Cursor 后 VACUUM 才会明显下降。",
-        "progress_vacuum_explain": "需要独占锁。进度条显示已用时与实时 db/wal 大小。",
+        "progress_vacuum_explain": "进度条按耗时估算百分比（VACUUM 无原生进度），完成时到 100%。",
         "progress_wal_warn": "警告: wal 已有 {gb:.2f} GB，请先彻底退出 Cursor 再 VACUUM。",
         "progress_checkpoint": "wal_checkpoint(TRUNCATE) ...",
         "agent_skipped": "跳过 {n} 个被占用目录；已删的下次会自动跳过。",

@@ -127,7 +127,7 @@ def delete_old_chats(
             )
             con.commit()
             done = min(total, start + len(batch))
-            bar.update(done, force=True, label=f"{t('bar_delete_chats')} {done}/{total}")
+            bar.update(done, force=True)
         bar.finish()
         progress(
             t("progress_del_chats_done", n=done, kv=kv_total, sec=time.time() - t0)
@@ -152,9 +152,14 @@ def vacuum_state_db(db_path: Path, *, progress: ProgressFn = _log) -> None:
     if wal > 100 * 1024 * 1024:
         progress(t("progress_wal_warn", gb=wal / (1024**3)))
 
+    # Time-based % so the bar always shows a moving percentage (VACUUM has no native %).
+    estimate = max(45.0, (before / (1024**3)) * 35.0)
     t0 = time.time()
-    bar = ProgressBar(indeterminate=True, label=_size_label(db_path, t("bar_vacuum")))
-    bar.start_heartbeat(0.5)
+    bar = ProgressBar(
+        estimate_seconds=estimate,
+        label=_size_label(db_path, t("bar_vacuum")),
+    )
+    bar.start_heartbeat(0.4)
     con = sqlite3.connect(str(db_path), timeout=15)
     try:
         con.execute("PRAGMA busy_timeout=15000")
@@ -208,11 +213,9 @@ def clean_agent_versions(
             deleted.append(item.name)
             if existed:
                 freed += item.size_bytes
-            _log(f"  OK  [{i}/{total}] {item.name}  ({item.size_bytes / (1024**2):.0f} MB)")
         else:
             locked += 1
-            _log(f"  SKIP[{i}/{total}] {item.name}  ({err})")
-        bar.update(i, force=True, label=f"{t('bar_delete_agents')} {i}/{total}")
+        bar.update(i, force=True, label=f"{t('bar_delete_agents')} {item.name[:24]}")
     bar.finish(ok=locked == 0)
     progress(t("progress_agents_freed", gb=freed / (1024**3)))
     if locked:
